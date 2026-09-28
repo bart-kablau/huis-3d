@@ -1,0 +1,1880 @@
+<meta charset="utf-8">
+<title>Muurdoorbraak 3D</title>
+<meta name="robots" content="noindex, nofollow">
+<!-- zonder viewport-regel legt een telefoon de pagina op 980 px breed uit en is alles piepklein -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<script>
+  // Het model (± 5,5 MB) meteen gaan ophalen, nog voordat three.js van het CDN binnen is.
+  // De module hieronder leest dit antwoord uit en telt de bytes voor de laadbalk.
+  window.vroegModel = fetch('./huis-glb.txt');
+  window.vroegModel.catch(() => {});  // een fout handelt de module zelf af
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #eef1f4;
+    --surface: rgba(255,255,255,0.86);
+    --surface-strong: rgba(255,255,255,0.97);
+    --surface-border: rgba(15,23,42,0.12);
+    --text: #101826;
+    --text-muted: #55606f;
+    --accent: #b3590f;
+    --accent-contrast: #ffffff;
+    --btn-bg: rgba(16,24,38,0.06);
+    --btn-bg-hover: rgba(16,24,38,0.11);
+    --focus: #2563eb;
+    --shadow: 0 8px 28px rgba(15,23,42,0.16);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --surface: rgba(22,27,35,0.82);
+      --surface-strong: rgba(26,32,41,0.96);
+      --surface-border: rgba(255,255,255,0.12);
+      --text: #e9edf2;
+      --text-muted: #9aa5b3;
+      --accent: #f2984c;
+      --accent-contrast: #14100a;
+      --btn-bg: rgba(255,255,255,0.08);
+      --btn-bg-hover: rgba(255,255,255,0.14);
+      --focus: #6ea8ff;
+      --shadow: 0 8px 28px rgba(0,0,0,0.45);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --surface: rgba(22,27,35,0.82);
+    --surface-strong: rgba(26,32,41,0.96);
+    --surface-border: rgba(255,255,255,0.12);
+    --text: #e9edf2;
+    --text-muted: #9aa5b3;
+    --accent: #f2984c;
+    --accent-contrast: #14100a;
+    --btn-bg: rgba(255,255,255,0.08);
+    --btn-bg-hover: rgba(255,255,255,0.14);
+    --focus: #6ea8ff;
+    --shadow: 0 8px 28px rgba(0,0,0,0.45);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    touch-action: none;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;          /* geen vergrootglas of menu bij lang drukken (iOS) */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #app { position: fixed; inset: 0; }
+
+  canvas.viewer-canvas {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    outline: none;
+  }
+
+  /* ---- overlay lagen ---- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  #labels-layer { z-index: 6; }
+  .maat-label {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    background: var(--surface-strong);
+    border: 1px solid var(--surface-border);
+    color: var(--text);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+    padding: 3px 8px;
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    white-space: nowrap;
+  }
+
+  /* ---- bedieningspaneel ---- */
+  #panel {
+    position: fixed;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    left: 16px;
+    right: 16px;
+    z-index: 25;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .panel-group {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: var(--surface);
+    backdrop-filter: blur(10px) saturate(1.4);
+    -webkit-backdrop-filter: blur(10px) saturate(1.4);
+    border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 4px;
+  }
+  .seg-btn, .toggle-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 9px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color .15s ease, color .15s ease;
+  }
+  /* alleen met een echte muis: op de telefoon bleef de hover-kleur na een tik op de knop hangen */
+  @media (hover: hover) {
+    .seg-btn:hover, .toggle-btn:hover { background: var(--btn-bg-hover); }
+  }
+  .seg-btn[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .toggle-btn[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .seg-btn:focus-visible, .toggle-btn:focus-visible, select:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  select#standpunt-select {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 26px 8px 12px;
+    border-radius: 9px;
+    cursor: pointer;
+    max-width: 44vw;
+    text-overflow: ellipsis;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position: calc(100% - 14px) calc(50% - 2px), calc(100% - 9px) calc(50% - 2px);
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+  }
+  @media (hover: hover) {
+    select#standpunt-select:hover { background-color: var(--btn-bg-hover); }
+  }
+
+  /* ---- bedieningshint onderin, verdwijnt vanzelf; nooit een laag over het beeld ---- */
+  #hint {
+    position: fixed;
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    left: 16px;
+    right: 16px;
+    z-index: 9;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity .6s ease;
+  }
+  #hint.weg { opacity: 0; }
+  #hint span {
+    display: inline-block;
+    background: var(--surface-strong);
+    border: 1px solid var(--surface-border);
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+  }
+  @media (pointer: coarse) {
+    /* op de telefoon zit de joystick linksonder: hint erboven */
+    #hint { bottom: calc(172px + env(safe-area-inset-bottom, 0px)); }
+    /* knoppen groot genoeg voor een duim */
+    .seg-btn, .toggle-btn, select#standpunt-select { min-height: 38px; }
+  }
+  @media (prefers-reduced-motion: reduce) { #hint { transition: none; } }
+  canvas.viewer-canvas { cursor: grab; }
+  canvas.viewer-canvas.slepen { cursor: grabbing; }
+
+  /* ---- joystick ----
+     #joystick is het (onzichtbare) grijpvak, ruimer dan de ring: een duim die er net naast landt telt mee.
+     De ring springt naar de plek waar de duim neerkomt (zwevende joystick, zoals in games), zodat er bij
+     het neerzetten geen schok in de looprichting zit; bij loslaten glijdt hij terug. */
+  #joystick {
+    position: fixed;
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    z-index: 10;
+    width: 148px;
+    height: 148px;
+    touch-action: none;
+    pointer-events: auto;
+  }
+  #joystick[hidden] { display: none; }
+  #joystick-basis {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 112px;
+    height: 112px;
+    margin: -56px 0 0 -56px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: transform .18s ease-out;
+    will-change: transform;
+  }
+  #joystick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 48px;
+    height: 48px;
+    margin: -24px 0 0 -24px;
+    border-radius: 999px;
+    background: var(--accent);
+    opacity: 0.85;
+    transition: transform .18s ease-out, opacity .15s ease;
+    will-change: transform;
+  }
+  /* tijdens het sturen volgt alles de duim direct, zonder naijlen */
+  #joystick.actief #joystick-basis, #joystick.actief #joystick-knob { transition: none; }
+  #joystick.actief #joystick-knob { opacity: 1; }
+  /* duim ver voorbij de ring: rennen */
+  #joystick.ren #joystick-knob { outline: 3px solid var(--accent); outline-offset: 4px; }
+  @media (prefers-reduced-motion: reduce) { #joystick-basis, #joystick-knob { transition: none; } }
+
+  /* ---- laden / fout ---- */
+  #loading, #error {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--bg);
+    color: var(--text);
+    text-align: center;
+    padding: 24px;
+  }
+  #loading { transition: opacity .45s ease; }
+  #loading.weg { opacity: 0; pointer-events: none; }
+  #loading[hidden], #error[hidden] { display: none; }
+  .laad-kaart {
+    width: min(280px, 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .laad-titel {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  #loading .bar {
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--btn-bg);
+    overflow: hidden;
+  }
+  #loading .bar-fill {
+    height: 100%;
+    width: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform .25s ease-out;
+  }
+  .laad-regel {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+  }
+  @media (prefers-reduced-motion: reduce) { #loading, #loading .bar-fill { transition: none; } }
+  #error p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-muted);
+    max-width: 320px;
+  }
+  #error strong { font-size: 15px; }
+
+  @media (max-width: 480px) {
+    .panel-group { padding: 3px; }
+    .seg-btn, .toggle-btn, select#standpunt-select { font-size: 12px; padding: 7px 9px; }
+    select#standpunt-select { max-width: 40vw; }
+  }
+</style>
+
+<div id="app">
+  <div id="labels-layer" class="overlay"></div>
+
+  <div id="panel">
+    <div class="panel-group" role="group" aria-label="Stand">
+      <button type="button" class="seg-btn" data-stand="huidig" aria-pressed="true">Huidig</button>
+      <button type="button" class="seg-btn" data-stand="nieuw" aria-pressed="false">Nieuw</button>
+    </div>
+    <div class="panel-group">
+      <button type="button" id="btn-constructie" class="toggle-btn" aria-pressed="false">Constructie accentueren</button>
+      <button type="button" id="btn-maten" class="toggle-btn" aria-pressed="false">Maten</button>
+    </div>
+    <div class="panel-group">
+      <select id="standpunt-select">
+        <option value="">Kies standpunt</option>
+      </select>
+    </div>
+    <div class="panel-group" role="group" aria-label="Uiterlijk">
+      <button type="button" class="seg-btn" data-look="foto" aria-pressed="true">Echt</button>
+      <button type="button" class="seg-btn" data-look="model" aria-pressed="false">Model</button>
+    </div>
+    <div class="panel-group" role="group" aria-label="Weergave">
+      <button type="button" class="seg-btn" data-mode="walk" aria-pressed="true">Rondlopen</button>
+      <button type="button" class="seg-btn" data-mode="bird" aria-pressed="false">Vogelvlucht</button>
+    </div>
+  </div>
+
+  <div id="hint" class="weg"><span id="hint-tekst">Sleep met de muis om rond te kijken &middot; WASD of pijltjes om te lopen &middot; shift om te rennen</span></div>
+
+  <div id="joystick" hidden aria-hidden="true">
+    <div id="joystick-basis"><div id="joystick-knob"></div></div>
+  </div>
+
+  <div id="loading" role="progressbar" aria-label="Huis laden" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div class="laad-kaart">
+      <p class="laad-titel">Huis laden</p>
+      <div class="bar"><div class="bar-fill" id="loading-fill"></div></div>
+      <div class="laad-regel"><span id="loading-stap">Viewer starten&hellip;</span><span id="loading-pct">0%</span></div>
+    </div>
+  </div>
+
+  <div id="error" hidden>
+    <p><strong>Het model kon niet geladen worden.</strong></p>
+    <p id="error-detail"></p>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ---------------------------------------------------------------------------
+// Basis: renderer, scene, camera
+// ---------------------------------------------------------------------------
+
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+
+const scene = new THREE.Scene();
+const ACHTERGROND = new THREE.Color(0xdce6f0);
+scene.background = ACHTERGROND;
+
+const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 300);
+camera.position.set(0, 1.65, 3);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.domElement.classList.add('viewer-canvas');
+// pixelratio begrensd: een telefoon met 3x zou anders 9x zoveel pixels tekenen voor nauwelijks scherper beeld
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isTouchDevice ? 1.5 : 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+// tonemapping geldt voor de weergave Model; de foto's in Echt slaan hem over (toneMapped: false)
+// AgX: dichter bij de video dan ACES (28-09, scripts/viewer_score.py op 24 beelden: licht 0,30 tegen 0,34);
+// ACES drukt donkere tinten (zwarte fronten, stenen treden, teak) te diep weg
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 2.0;
+renderer.shadowMap.enabled = false; // geen realtime schaduwen, later gebakken licht
+renderer.info.autoReset = false;    // huis en buiten samen tellen in renderInfo (reset per beeld)
+document.getElementById('app').appendChild(renderer.domElement);
+// scherpe vloeren en foto onder een schuine kijkhoek; kost op de GPU vrijwel niets
+const MAX_ANISO = renderer.capabilities.getMaxAnisotropy();
+
+// Tekenen op verzoek: staat de camera stil en verandert er niets, dan geen nieuw beeld. Dat spaart
+// accu en warmte op de telefoon, zodat die niet terugschakelt en het lopen daarna vloeiend blijft.
+// Elke wijziging aan de scène roept vraagRender() aan; de camera wordt per beeld vergeleken.
+let tekenNodig = 1;
+function vraagRender() { tekenNodig = Math.max(tekenNodig, 2); }
+
+// Oogaanpassing: binnen belicht voor het interieur; buiten (tuin, terras, straat, vogelvlucht) is de zon
+// ruim tien keer zo sterk, dus lager, zoals je ogen wennen als je naar buiten loopt.
+const BELICHTING = { binnen: 2.0, buiten: 0.95 };   // 28-09: mediaan lineair zoals de video (± 0,26)
+const oog = { buiten: false };
+function updateBelichting(dt) {
+  const doel = (state.mode === 'bird' || oog.buiten) ? BELICHTING.buiten : BELICHTING.binnen;
+  const e = renderer.toneMappingExposure;
+  if (e === doel) return;
+  renderer.toneMappingExposure = Math.abs(doel - e) < 2e-3 ? doel : e + (doel - e) * (1 - Math.exp(-dt / 0.6));
+  tekenNodig = Math.max(tekenNodig, 1);
+}
+
+// Omgevingslicht: zonder omgeving zien de PBR-materialen (hout, baksteen, graniet) er vlak uit.
+// RoomEnvironment is procedureel, dus geen extra bestand dat het artifact-kader moet serveren.
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+pmrem.dispose();
+
+// Licht: hemisphere + zachte directionele lamp, geen schaduwen (die komen later gebakken).
+const hemi = new THREE.HemisphereLight(0xf4f7ff, 0x9a8f80, 0.9);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff2df, 1.3);
+sun.position.set(6, 10, 4);
+sun.castShadow = false;
+scene.add(sun);
+// tegenlicht, zodat wanden die van de zon af staan niet dichtlopen
+const fill = new THREE.DirectionalLight(0xe8eeff, 0.4);
+fill.position.set(-5, 6, -8);
+scene.add(fill);
+
+// kijkhoek: liggend 68 graden verticaal; staand (telefoon) ruimer, zodat je horizontaal minstens ± 50 graden
+// ziet in plaats van ± 35 (voelt anders als door een koker kijken). De video zelf is met 0,5x gefilmd.
+function zetKijkhoek() {
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = aspect;
+  const minHor = 50 * Math.PI / 180;
+  const nodig = 2 * Math.atan(Math.tan(minHor / 2) / aspect) * 180 / Math.PI;
+  camera.fov = Math.min(90, Math.max(68, nodig));
+  camera.updateProjectionMatrix();
+}
+zetKijkhoek();
+window.addEventListener('resize', () => {
+  zetKijkhoek();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  vraagRender();
+});
+
+// ---------------------------------------------------------------------------
+// Toestand
+// ---------------------------------------------------------------------------
+
+const state = {
+  stand: 'huidig',       // 'huidig' | 'nieuw'
+  mode: 'walk',          // 'walk' | 'bird'
+  accentueren: false,
+  maten: false,          // maatlijnen en hun labels: standaard uit, aan met de knop Maten (Bart 28-09)
+  eyeHeight: 1.65,
+  floorY: 0,
+  floorReady: false,
+};
+
+let root = null;         // gltf.scene
+let nodeVast = null, nodeHuidig = null, nodeNieuw = null, nodeConstructie = null, nodeVerdieping = null;
+let floorMeshes = [];
+let collidablesVast = [], collidablesHuidig = [], collidablesNieuw = [];
+let activeCollidables = [];
+let standpunten = [];     // { name, label, position: Vector3, kijkNaar: Vector3 }
+let constructieOriginalMaterials = new Map();
+let accentMaterial = null;
+let measureGroup = new THREE.Group();
+scene.add(measureGroup);
+let measureLabels = []; // { el, mid: Vector3 }
+
+function blenderToThree(arr) {
+  // Blender (x, y, z, Z-omhoog) -> glTF/three (x, z, -y), zie GLB.md
+  return new THREE.Vector3(arr[0], arr[2], -arr[1]);
+}
+
+function rebuildActiveCollidables() {
+  activeCollidables = collidablesVast.concat(state.stand === 'huidig' ? collidablesHuidig : collidablesNieuw);
+}
+
+function applyStandVisibility() {
+  if (nodeHuidig) nodeHuidig.visible = state.stand === 'huidig';
+  if (nodeNieuw) nodeNieuw.visible = state.stand === 'nieuw';
+  measureGroup.visible = state.maten;
+  for (const m of measureLabels) {
+    m.el.hidden = !state.maten;
+    if (m.el.hidden) m.el.style.display = 'none';  // updateLabels slaat verborgen labels daarna over
+  }
+  rebuildActiveCollidables();
+  zetLichtkaart();
+  vraagRender();
+}
+
+// ---------------------------------------------------------------------------
+// Gebakken licht: per stand een lichtkaart (scripts/bak.py + lichtkaart.py) op de tweede UV-set.
+// De waarden zijn diffuus licht zonder kleur (Cycles); three.js deelt door pi, vandaar de factor.
+// Lukt het laden niet, dan blijft de gewone belichting staan.
+// ---------------------------------------------------------------------------
+
+const lichtkaart = { huidig: null, nieuw: null, schaal: 1, klaar: false, materialen: new Map(), probeMaterialen: [] };
+const LICHTKAART_FACTOR = Number((location.search.match(/[?&]lk=([\d.]+)/) || [])[1]) || 1.0;
+
+function zetLichtkaart() {
+  if (!lichtkaart.klaar) return;
+  const tex = lichtkaart[state.stand];
+  for (const m of lichtkaart.materialen.values()) {
+    m.lightMap = tex;
+    m.needsUpdate = true;
+  }
+  for (const m of lichtkaart.probeMaterialen) {
+    m.lightMap = m.userData.probe[state.stand];
+  }
+  vraagRender();
+}
+
+// ---------------------------------------------------------------------------
+// Fototextuur: de rondloopvideo, per texel uit het beste videobeeld (scripts/fototextuur.py), op
+// dezelfde tweede UV-set. Onverlicht (het licht zit al in de foto). Knop Echt / Model wisselt.
+// ---------------------------------------------------------------------------
+
+const foto = { klaar: false, materialen: new Map(), meshes: [], look: 'model' };   // Model is het gewenste beeld, Echt blijft om te vergelijken
+
+// Buiten: panorama uit de video (scripts/panorama.py) op een bol die met de camera meereist.
+// Ook een foto, dus zonder tonemapping (anders wordt hij vaal en te licht, zie laadFoto).
+const buitenBol = new THREE.Mesh(
+  new THREE.SphereGeometry(40, 48, 24),
+  new THREE.MeshBasicMaterial({ side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false })
+);
+buitenBol.renderOrder = -1;
+buitenBol.visible = false;
+scene.add(buitenBol);
+const alleenModel = [];     // plaatshouders (Poly Haven-planten die niet op de echte lijken): in "Echt" weg
+const buitenObjecten = [];
+// Buiten (omgeving, bovenbouw, maaiveld): geen lichtkaart, dus een eigen scène met zon en hemellicht die na het
+// huis getekend wordt, met dezelfde diepte. Zonrichting uit data/renders.json (instellingen.zon, gemeten uit de
+// rondloopvideo: 26-09-2026 16:21), modelassen (x, y, z) -> three (x, z, -y).
+const sceneBuiten = new THREE.Scene();
+const zonBuiten = new THREE.DirectionalLight(0xfff1dc, 30);   // = instellingen.zon.sterkte, zoals gebakken
+zonBuiten.position.set(0.8712, 0.4352, -0.2269).multiplyScalar(60);
+sceneBuiten.add(zonBuiten, zonBuiten.target);
+const hemiBuiten = new THREE.HemisphereLight(0xdde7f4, 0x55643f, 3.0);   // tot de hemel geladen is
+sceneBuiten.add(hemiBuiten);   // maaiveld en ruitglas: in "Echt" weg, zodat je de video buiten ziet
+
+async function laadBuiten() {
+  try {
+    const tex = await beelden.buiten;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    buitenBol.material.map = tex;
+    buitenBol.material.needsUpdate = true;
+    // panorama.py: kolom px hoort bij lengte px/B*360-180 graden (atan2(noord, oost)), dus west aan de randen,
+    // oost in het midden. SphereGeometry legt u=0 op -x en draait via -z (noord): dat is precies dezelfde
+    // indeling, dus niet draaien (26-09 stond hier -90 graden en keek elk raam de verkeerde kant op).
+    buitenBol.rotation.y = 0;
+    buitenBol.userData.klaar = true;
+    buitenBol.userData.video = tex;
+  } catch (e) {
+    console.warn('Geen buitenpanorama:', e);
+  }
+  // Model: de HDRI waarmee gebakken is (scripts/hemel.py, zelfde indeling), zodat lucht en licht kloppen
+  try {
+    const hemel = await beelden.hemel;
+    hemel.colorSpace = THREE.SRGBColorSpace;
+    buitenBol.userData.hemel = hemel;
+    const hemelEnv = new THREE.Texture(hemel.image);
+    hemelEnv.mapping = THREE.EquirectangularReflectionMapping;
+    hemelEnv.colorSpace = THREE.SRGBColorSpace;
+    hemelEnv.needsUpdate = true;
+    sceneBuiten.environment = pmrem.fromEquirectangular(hemelEnv).texture;
+    // hemel.webp geeft 1,56 bestraling op een horizontaal vlak (gemeten, 27-09); x 2,7 = de 4,2 van de
+    // bak-HDRI, en dan weerspiegelt het glas een lucht die even helder is als de echte
+    sceneBuiten.environmentIntensity = 2.7;
+    hemiBuiten.color.set(0x000000);        // de lucht komt nu uit de hemel ...
+    hemiBuiten.groundColor.set(0x8d9a74);  // ... alleen de kaatsing van gras en klinkers nog hier
+    hemiBuiten.intensity = 1.6;
+  } catch (e) {
+    console.warn('Geen hemel:', e);
+  }
+  zetLook(foto.look);
+}
+
+function zetLook(look) {
+  foto.look = look;
+  const buiten = look === 'foto' && foto.klaar && buitenBol.userData.klaar;
+  // achtergrond: in Echt het videopanorama, in Model de HDRI; het maaiveld alleen weg als er een bol staat
+  const bolTex = buiten ? buitenBol.userData.video : (look !== 'foto' ? buitenBol.userData.hemel : null);
+  if (bolTex && buitenBol.material.map !== bolTex) {
+    buitenBol.material.map = bolTex;
+    buitenBol.material.needsUpdate = true;
+  }
+  buitenBol.visible = !!bolTex && state.mode !== 'bird';
+  for (const o of buitenObjecten) o.visible = !buiten;
+  sceneBuiten.visible = !(look === 'foto' && foto.klaar);   // in Echt toont het videopanorama buiten
+  // Model: buiten (met de lucht) wordt eerst getekend en het huis eroverheen, zodat glas mengt met wat
+  // erachter ligt; dan hoort de bol bij buiten en wist het huis de achtergrond niet. Echt: alles in het huis.
+  const bolScene = sceneBuiten.visible ? sceneBuiten : scene;
+  if (buitenBol.parent !== bolScene) bolScene.add(buitenBol);
+  scene.background = sceneBuiten.visible ? null : ACHTERGROND;
+  sceneBuiten.background = ACHTERGROND;
+  for (const o of alleenModel) o.visible = !(look === 'foto' && foto.klaar);
+  for (const mesh of foto.meshes) {
+    const m = look === 'foto' && foto.klaar ? foto.materialen.get(mesh.userData._origUuid) : mesh.userData._modelMat;
+    if (m) mesh.material = m;
+  }
+  const echt = look === 'foto' && foto.klaar;
+  hemi.intensity = echt ? 0.9 : (lichtkaart.klaar ? 0.10 : 0.9);
+  // in Echt krijgen de onderdelen zonder foto het gewone hemellicht; de probe zou ze dubbel belichten
+  for (const m of lichtkaart.probeMaterialen) m.lightMapIntensity = echt ? 0 : Math.PI * LICHTKAART_FACTOR;
+  document.querySelectorAll('.seg-btn[data-look]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.look === look)));
+  vraagRender();
+}
+
+async function laadFoto(meshes) {
+  try {
+    const info = await bestanden.fotoJson;
+    let som = 0, aantal = 0;
+    const gezien = new Set();
+    for (const mesh of meshes) {
+      const a = mesh.geometry.attributes.uv1;
+      if (gezien.has(a)) continue;
+      gezien.add(a);
+      for (let i = 0; i < a.array.length; i++) som += Math.round(a.array[i] * 10000);
+      aantal += a.array.length;
+    }
+    if (som !== info.uv_som || aantal !== info.uv_aantal) throw new Error('fototextuur hoort bij een ander model');
+    const tex = await beelden.foto;
+    tex.flipY = false;
+    tex.channel = 1;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = MAX_ANISO;   // mipmaps staan standaard aan (LinearMipmapLinear)
+    tex.needsUpdate = true;
+    // toneMapped: false, want het licht zit al in de foto. Met ACES en belichting 1,3 erover werd hij
+    // ± 13 % lichter en flets (27-09 gemeten tegen de videobeelden); zo komt elke texel er 1-op-1 uit.
+    const echtMat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+    // dunne onderdelen (trap, hekje, leuningen) rafelen in de foto: die houden het schone model
+    // eigen materiaal houden in "Echt": wit gelakte trap (textuur smeert), en de vislamp (zwart metaal;
+    // de video ziet hem vooral van dichtbij met een standfout, dan komt er muurkleur op het lijf)
+    // ook gepolijst graniet, zwart glas en rvs: daarin spiegelt per beeld iets anders (pan, ramen), dus uit de
+    // video komt geen vaste kleur; het eigen materiaal met gebakken licht is echter
+    const geenFoto = /trap|leuning|kelderhek|keldertrede|staander|Lamp_vis|werkblad|kookplaat|spatrand_oost|vensterbank|kap_schouw|kap_filter|spoelbak|kraan|oven_/i;
+    meshes = meshes.filter((m) => !geenFoto.test(m.name) && !(m.parent && geenFoto.test(m.parent.name)));
+    for (const mesh of meshes) {
+      mesh.userData._origUuid = mesh.userData._origUuid || mesh.material.uuid;
+      mesh.userData._modelMat = mesh.userData._modelMat || mesh.material;
+      foto.materialen.set(mesh.userData._origUuid, echtMat);
+    }
+    foto.meshes = meshes;
+    foto.klaar = true;
+    zetLook(foto.look);
+  } catch (e) {
+    console.warn('Geen fototextuur, model blijft:', e);
+    document.querySelector('.seg-btn[data-look="foto"]').disabled = true;
+    zetLook('model');
+  }
+}
+
+async function laadLichtkaarten(meshes) {
+  if (!bestanden.lichtJson) return;  // ?zonderlicht: alleen voor lokaal vergelijken
+  try {
+    const info = await bestanden.lichtJson;
+    // de kaart hoort alleen bij precies deze lichtkaart-UV's (anders is er opnieuw gebouwd zonder te bakken)
+    let som = 0, aantal = 0;
+    const gezien = new Set();
+    for (const mesh of meshes) {
+      const a = mesh.geometry.attributes.uv1;
+      if (gezien.has(a)) continue;
+      gezien.add(a);
+      for (let i = 0; i < a.array.length; i++) som += Math.round(a.array[i] * 10000);
+      aantal += a.array.length;
+    }
+    if (info.uv_aantal !== undefined && (som !== info.uv_som || aantal !== info.uv_aantal)) {
+      throw new Error(`lichtkaart hoort bij een ander model (uv ${som}/${aantal} tegen ${info.uv_som}/${info.uv_aantal})`);
+    }
+    const [h, n] = await Promise.all([beelden.lichtHuidig, beelden.lichtNieuw]);
+    const logCodering = info.codering === 'log';
+    for (const t of [h, n]) {
+      t.flipY = false;          // glTF-UV's: rij 0 is de bovenkant
+      t.channel = 1;            // tweede UV-set (TEXCOORD_1)
+      // log-codering: de ruwe waarde, terugrekenen in de shader; anders opgeslagen met gamma 2,2
+      t.colorSpace = logCodering ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+      t.needsUpdate = true;
+    }
+    // v = ln(1 + L/k0) / ln(1 + Lmax/k0) (scripts/lichtkaart.py), dus L = k0 (exp(v ln(1 + Lmax/k0)) - 1)
+    const lmChunk = logCodering ? THREE.ShaderChunk.lights_fragment_maps.replace(
+      'vec3 lightMapIrradiance = lightMapTexel.rgb * lightMapIntensity;',
+      `vec3 lightMapIrradiance = ${info.k0.toFixed(6)} * ( exp( lightMapTexel.rgb * ${Math.log1p(info.lmax / info.k0).toFixed(6)} ) - 1.0 ) * lightMapIntensity;`) : null;
+    if (logCodering && lmChunk === THREE.ShaderChunk.lights_fragment_maps) throw new Error('lichtkaart-shader niet gevonden');
+    lichtkaart.huidig = h;
+    lichtkaart.nieuw = n;
+    lichtkaart.schaal = info.schaal;
+    for (const mesh of meshes) {
+      const orig = mesh.material;
+      if (!lichtkaart.materialen.has(orig.uuid)) {
+        const kopie = orig.clone();
+        // x pi: three.js deelt het licht uit een lichtkaart door pi (Lambert), de bake niet
+        kopie.lightMapIntensity = info.schaal * Math.PI * LICHTKAART_FACTOR;
+        if (lmChunk) {
+          kopie.onBeforeCompile = (sh) => {
+            sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_maps>', lmChunk);
+          };
+          kopie.customProgramCacheKey = () => 'lichtkaart-log';
+        }
+        lichtkaart.materialen.set(orig.uuid, kopie);
+      }
+      mesh.material = lichtkaart.materialen.get(orig.uuid);
+      mesh.userData._origUuid = orig.uuid;
+      mesh.userData._modelMat = mesh.material;
+    }
+    // onderdelen zonder lichtkaart (planten, gordijnen, lampen, stopcontacten, grepen): een lichtkaart van één
+    // pixel met het gebakken licht om hen heen (scripts/lichtprobe.py), anders zijn ze 2-5x te donker
+    try {
+      const probes = (await bestanden.probes).objecten;
+      const pixel = (v) => {
+        const t = new THREE.DataTexture(new Float32Array([v[0], v[1], v[2], 1]), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+        t.channel = 0;
+        t.needsUpdate = true;
+        return t;
+      };
+      const metLicht = new Set(meshes);
+      root.traverse((mesh) => {
+        if (!mesh.isMesh || metLicht.has(mesh) || !mesh.material || !mesh.material.isMeshStandardMaterial) return;
+        const naam = probes[mesh.name] ? mesh.name : (mesh.parent && mesh.parent.name);
+        const pr = probes[naam];
+        if (!pr) return;
+        const kopie = mesh.material.clone();
+        kopie.lightMapIntensity = Math.PI * LICHTKAART_FACTOR;
+        kopie.userData.probe = { huidig: pixel(pr.huidig), nieuw: pixel(pr.nieuw) };
+        kopie.lightMap = kopie.userData.probe[state.stand];
+        lichtkaart.probeMaterialen.push(kopie);
+        mesh.material = kopie;
+        mesh.userData._modelMat = kopie;
+      });
+    } catch (e) {
+      console.warn('Geen probes, onderdelen zonder lichtkaart houden het hemellicht:', e);
+    }
+    // metaal: three.js geeft metaal geen diffuus licht, dus uit een lichtkaart ook niets; met alleen de zwakke
+    // omgeving werden dorpel, spoelbak, kraan en messing zwart (review r3 b). Half metaal met zijn eigen
+    // weerspiegeling van de kamer, dan pakt het de lichtkaart ook mee.
+    for (const m of [...lichtkaart.materialen.values(), ...lichtkaart.probeMaterialen]) {
+      if (m.metalness > 0.5) {
+        m.metalness = 0.45;
+        m.envMap = scene.environment;
+        m.envMapIntensity = 0.6;
+      }
+    }
+    lichtkaart.klaar = true;
+    zetLichtkaart();
+    // het licht zit nu in de kaart: losse lampen alleen nog zacht, voor de kleine onderdelen
+    // weinig extra licht, anders wordt het vlak (27-09: hemi 0, 0,15 en 0,3 vergeleken; 28-09 met AgX tegen de video gemeten: 0,10)
+    // en laat de planten en lampen zonder lichtkaart niet dichtlopen
+    hemi.intensity = 0.10;
+    sun.intensity = 0.0;
+    fill.intensity = 0.0;
+    scene.environmentIntensity = 0.10;
+  } catch (e) {
+    console.warn('Geen gebakken licht, gewone belichting blijft:', e);
+  }
+}
+
+function applyAccentMateriaal() {
+  if (!nodeConstructie) return;
+  nodeConstructie.traverse((obj) => {
+    if (!obj.isMesh) return;
+    if (state.accentueren) {
+      if (!constructieOriginalMaterials.has(obj.uuid)) {
+        constructieOriginalMaterials.set(obj.uuid, obj.material);
+      }
+      if (!accentMaterial) {
+        accentMaterial = new THREE.MeshStandardMaterial({
+          color: 0xd9550f,
+          emissive: 0x7a2a00,
+          emissiveIntensity: 0.35,
+          roughness: 0.35,
+          metalness: 0.5,
+        });
+      }
+      obj.material = accentMaterial;
+    } else if (constructieOriginalMaterials.has(obj.uuid)) {
+      obj.material = constructieOriginalMaterials.get(obj.uuid);
+    }
+  });
+  vraagRender();
+}
+
+// ---------------------------------------------------------------------------
+// Laden (alleen GLTFLoader, geen wasm-decoders)
+// ---------------------------------------------------------------------------
+
+const loader = new GLTFLoader();
+
+// Het artifact-kader staat fetch() alleen toe op de eigen bestanden (connect-src 'self'), en dus
+// niet op de blob:-adressen waarmee GLTFLoader de ingepakte texturen ophaalt: dan blijft alles wit.
+// We onthouden de blob achter elk adres en maken er zelf een ImageBitmap van, zonder fetch.
+const blobPerAdres = new Map();
+const maakAdres = URL.createObjectURL.bind(URL);
+URL.createObjectURL = (obj) => {
+  const adres = maakAdres(obj);
+  if (obj instanceof Blob) blobPerAdres.set(adres, obj);
+  return adres;
+};
+function alsAfbeelding(adres) {
+  // terugval: <img> met het blob:-adres (img-src staat blob: wel toe)
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = adres;
+  });
+}
+const bitmapLader = {
+  isImageBitmapLoader: true, // GLTFLoader verpakt het resultaat dan zelf in een Texture
+  load(adres, onLoad, onProgress, onError) {
+    const blob = blobPerAdres.get(adres);
+    const bitmap = blob
+      ? createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })
+          .catch(() => createImageBitmap(blob))
+      : Promise.reject(new Error('geen blob'));
+    bitmap
+      .catch(() => alsAfbeelding(adres))
+      .then((beeld) => { blobPerAdres.delete(adres); onLoad(beeld); }, onError);
+  },
+};
+loader.register((parser) => {
+  parser.textureLoader = bitmapLader;
+  return { name: 'kj_texturen_zonder_fetch' };
+});
+
+const loadingEl = document.getElementById('loading');
+const loadingFill = document.getElementById('loading-fill');
+const loadingStap = document.getElementById('loading-stap');
+const loadingPct = document.getElementById('loading-pct');
+const errorEl = document.getElementById('error');
+const errorDetail = document.getElementById('error-detail');
+
+// ---------------------------------------------------------------------------
+// Downloads met voortgang: alle eigen bestanden tegelijk ophalen (fetch op de eigen bestanden mag in
+// het artifact-kader, alleen fetch(blob:) niet) en de bytes tellen voor de laadbalk. Afbeeldingen
+// worden daarna via een <img> met blob:-adres gelezen (img-src blob: mag wel), zie textuurUitBlob.
+// ---------------------------------------------------------------------------
+
+const downloads = [];   // { geladen, totaal, schatting, klaar, mislukt }
+function nieuweDownload(schatting) {
+  const d = { geladen: 0, totaal: 0, schatting, klaar: false, mislukt: false };
+  downloads.push(d);
+  return d;
+}
+
+// soort: 'text', 'json' of 'blob'. vroeg: een al gestart fetch-antwoord (het model, zie de kop).
+async function haalOp(url, soort, d, vroeg) {
+  try {
+    const r = await (vroeg || fetch(url));
+    if (!r.ok) throw new Error(url.replace('./', '') + ' gaf HTTP ' + r.status);
+    const lengte = Number(r.headers.get('content-length')) || 0;
+    // ingepakt verstuurd (gzip, br): de lengte telt dan de ingepakte bytes en de lezer de uitgepakte;
+    // base64-tekst pakt ± 25 % in, webp niet
+    const ingepakt = !!r.headers.get('content-encoding');
+    if (lengte) d.totaal = ingepakt && soort !== 'blob' ? lengte * 1.33 : lengte;
+    let blob;
+    if (r.body && r.body.getReader) {
+      const lezer = r.body.getReader();
+      const delen = [];
+      for (;;) {
+        const { done, value } = await lezer.read();
+        if (done) break;
+        delen.push(value);
+        d.geladen += value.byteLength;
+        toonVoortgang();
+      }
+      blob = new Blob(delen, { type: r.headers.get('content-type') || '' });
+    } else {
+      blob = await r.blob();
+      d.geladen = blob.size;
+    }
+    d.klaar = true;
+    toonVoortgang();
+    if (soort === 'text') return await blob.text();
+    if (soort === 'json') return JSON.parse(await blob.text());
+    return blob;
+  } catch (e) {
+    d.mislukt = true;
+    toonVoortgang();
+    throw e;
+  }
+}
+
+// Schattingen tellen alleen tot de echte lengte binnen is (een paar milliseconden na de start).
+const dModel = nieuweDownload(5.5e6);
+const dFoto = nieuweDownload(1.05e6);
+const zonderLicht = /[?&]zonderlicht/.test(location.search);  // alleen voor lokaal vergelijken
+const bestanden = {
+  model: haalOp('./huis-glb.txt', 'text', dModel, window.vroegModel),
+  lichtJson: zonderLicht ? null : haalOp('./lichtkaart.json', 'json', nieuweDownload(100)),
+  lichtHuidig: zonderLicht ? null : haalOp('./lichtkaart-huidig.webp', 'blob', nieuweDownload(2.3e5)),
+  lichtNieuw: zonderLicht ? null : haalOp('./lichtkaart-nieuw.webp', 'blob', nieuweDownload(2.3e5)),
+  probes: zonderLicht ? null : haalOp('./probes.json', 'json', nieuweDownload(3e4)),
+  fotoJson: haalOp('./foto.json', 'json', nieuweDownload(100)),
+  buiten: haalOp('./buiten.webp', 'blob', nieuweDownload(1e5)),
+  hemel: haalOp('./hemel.webp', 'blob', nieuweDownload(5e5)),
+};
+// de naam van de fototextuur staat in foto.json; op een desktop met een GPU die 8192 aankan de scherpe
+// versie (0,65 cm per texel), op een telefoon de gewone (4096: de scherpe vraagt ± 350 MB videogeheugen)
+const magHd = !isTouchDevice && renderer.capabilities.maxTextureSize >= 8192 && !/[?&]gewoon/.test(location.search);
+bestanden.foto = bestanden.fotoJson.then(
+  (info) => {
+    const hd = magHd && info.bestand_hd;
+    if (hd) dFoto.schatting = 4.2e6;
+    return haalOp('./' + (hd ? info.bestand_hd : info.bestand), 'blob', dFoto);
+  },
+  (e) => { dFoto.mislukt = true; toonVoortgang(); throw e; }
+);
+// fouten handelen de laadfuncties zelf af (terugvallen op het model); dit voorkomt alleen een
+// "Uncaught (in promise)" zolang ze nog niet aan de beurt zijn
+for (const p of Object.values(bestanden)) if (p) p.catch(() => {});
+
+// Afbeelding uit een opgehaalde blob. decode() pakt de webp vooraf uit, buiten de hoofdlus, zodat het
+// uploaden naar de GPU later niet hapert. Eigen createObjectURL (maakAdres), buiten de GLTF-lader om.
+async function textuurUitBlob(belofte) {
+  const blob = await belofte;
+  const adres = maakAdres(blob);
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = adres;
+  try {
+    await img.decode();
+  } catch (e) {
+    // decode() weigert soms terwijl het beeld wel laadt (oudere Safari): wacht dan op load
+    if (!(img.complete && img.naturalWidth)) {
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = () => rej(new Error('afbeelding niet te lezen'));
+      });
+    }
+  }
+  const tex = new THREE.Texture(img);
+  tex.onUpdate = () => { URL.revokeObjectURL(adres); tex.onUpdate = null; };  // na de upload vrijgeven
+  tex.needsUpdate = true;
+  return tex;
+}
+// Uitpakken begint zodra een bestand binnen is, dus terwijl het model nog downloadt of wordt opgebouwd,
+// en niet pas daarna een voor een (scheelde 27-09 ruim een seconde op het laadscherm).
+const beelden = {};
+for (const naam of ['lichtHuidig', 'lichtNieuw', 'foto', 'buiten', 'hemel']) {
+  if (!bestanden[naam]) continue;
+  beelden[naam] = textuurUitBlob(bestanden[naam]);
+  beelden[naam].catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Laadscherm: 85 % voor de downloads, de rest voor opbouwen, aanbrengen en voorbereiden.
+// Het scherm gaat pas weg als alles er is en het eerste beeld zonder haperen kan.
+// ---------------------------------------------------------------------------
+
+const laden = { getoond: 0, modelKlaar: false, texturenKlaar: false, voorbereid: false, weg: false, gepland: false };
+
+function toonVoortgang() {
+  if (laden.gepland || laden.weg) return;
+  laden.gepland = true;
+  requestAnimationFrame(tekenVoortgang);   // hooguit één keer per beeld de balk bijwerken
+}
+
+function mb(bytes) {
+  return (bytes / 1e6).toLocaleString('nl-NL', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function tekenVoortgang() {
+  laden.gepland = false;
+  let geladen = 0, totaal = 0, allesBinnen = true;
+  for (const d of downloads) {
+    if (d.mislukt) continue;
+    geladen += d.geladen;
+    totaal += d.klaar ? d.geladen : Math.max(d.totaal || d.schatting, d.geladen + 1);
+    if (!d.klaar) allesBinnen = false;
+  }
+  const doel = 85 * (totaal ? geladen / totaal : 0)
+    + (laden.modelKlaar ? 6 : 0) + (laden.texturenKlaar ? 4 : 0) + (laden.voorbereid ? 5 : 0);
+  laden.getoond = Math.max(laden.getoond, Math.min(100, doel));  // de balk loopt nooit terug
+  const pct = Math.round(laden.getoond);
+  loadingFill.style.transform = `scaleX(${(laden.getoond / 100).toFixed(4)})`;
+  loadingPct.textContent = pct + '%';
+  loadingEl.setAttribute('aria-valuenow', String(pct));
+  loadingStap.textContent = !allesBinnen ? `Downloaden, ${mb(geladen)} van ${mb(totaal)} MB`
+    : !laden.modelKlaar ? 'Model opbouwen'
+    : !laden.texturenKlaar ? "Foto's en licht aanbrengen"
+    : !laden.voorbereid ? 'Beeld voorbereiden'
+    : 'Klaar';
+}
+
+const volgendBeeld = () => new Promise((res) => requestAnimationFrame(() => res()));
+
+// Alle texturen nu naar de GPU en alle shaders vooraf compileren, ook die van de weergave Model:
+// anders hapert het eerste beeld, of de eerste klik op Model. renderer.compile loopt ook langs de
+// verborgen onderdelen (stand Nieuw, verdieping), dus alleen de twee weergaven wisselen.
+const TEXTUUR_SLEUTELS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'lightMap'];
+async function bereidVoor() {
+  laden.texturenKlaar = true;
+  toonVoortgang();
+  await volgendBeeld();
+  const texturen = new Set();
+  const verzamel = (m) => {
+    if (!m) return;
+    for (const k of TEXTUUR_SLEUTELS) if (m[k] && m[k].isTexture) texturen.add(m[k]);
+  };
+  scene.traverse((o) => { if (o.isMesh) { verzamel(o.material); verzamel(o.userData._modelMat); } });
+  for (const m of foto.materialen.values()) verzamel(m);
+  if (lichtkaart.huidig) texturen.add(lichtkaart.huidig);
+  if (lichtkaart.nieuw) texturen.add(lichtkaart.nieuw);
+  if (buitenBol.material.map) texturen.add(buitenBol.material.map);
+  for (const t of texturen) renderer.initTexture(t);
+  await renderer.compileAsync(scene, camera);
+  await renderer.compileAsync(sceneBuiten, camera);
+  if (foto.klaar) {
+    const look = foto.look;
+    zetLook(look === 'foto' ? 'model' : 'foto');
+    await renderer.compileAsync(scene, camera);
+    zetLook(look);
+  }
+  vraagRender();
+  await volgendBeeld();
+  await volgendBeeld();
+}
+
+function verbergLaadscherm() {
+  if (laden.weg || !errorEl.hidden) return;
+  laden.voorbereid = true;
+  tekenVoortgang();
+  laden.weg = true;
+  loadingEl.classList.add('weg');
+  window.setTimeout(() => { loadingEl.hidden = true; }, 500);
+  toonHint(7000);
+}
+
+// Uint8Array.fromBase64 is snel en zuinig; oudere browsers doen het met atob
+function base64NaarBytes(tekst) {
+  if (typeof Uint8Array.fromBase64 === 'function') {
+    try { return Uint8Array.fromBase64(tekst); } catch (e) { /* terugval hieronder */ }
+  }
+  const bin = atob(tekst);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf;
+}
+
+// Een artifact serveert geen .glb, dus het bouwscript levert het model ook als base64 in
+// huis-glb.txt; dat parsen we in het geheugen. Lokaal valt hij terug op huis.glb.
+async function laadModel() {
+  let tekst;
+  try {
+    tekst = await bestanden.model;
+  } catch (e) {
+    loader.load('./huis.glb', onModelGeladen, onModelVoortgang, () => onModelFout(e));
+    return;
+  }
+  await volgendBeeld();   // eerst "Model opbouwen" laten zien, dan pas het zware decoderen
+  const buf = base64NaarBytes(tekst.trim());
+  loader.parse(buf.buffer, './', onModelGeladen, onModelFout);
+}
+
+function onModelGeladen(gltf) {
+    root = gltf.scene;
+    scene.add(root);
+
+    nodeVast = root.getObjectByName('Vast');
+    nodeHuidig = root.getObjectByName('Huidig');
+    nodeNieuw = root.getObjectByName('Nieuw');
+    nodeConstructie = root.getObjectByName('Constructie');
+    nodeVerdieping = root.getObjectByName('Verdieping');
+    for (const naam of ['Omgeving', 'Verdieping', 'Vloer_maaiveld']) {
+      const n = root.getObjectByName(naam);
+      if (n) sceneBuiten.attach(n);   // attach houdt de wereldstand; het huis kadert zo zonder omgeving
+    }
+    const nodeStandpunten = root.getObjectByName('Standpunten');
+    const nodeMaten = root.getObjectByName('Maten');
+
+    // Vloeren (ooghoogte) en botsobjecten, met eigenaar-groep voor stand-filtering.
+    const groepVan = (obj) => {
+      let n = obj;
+      while (n) {
+        if (n === nodeHuidig) return 'huidig';
+        if (n === nodeNieuw) return 'nieuw';
+        if (n === nodeVast) return 'vast';
+        n = n.parent;
+      }
+      return 'vast';
+    };
+
+    root.traverse((obj) => {
+      if (!obj.isMesh) return;
+      const naam = obj.name || '';
+      // traptreden en bordes zijn vloer (je loopt erop), geen muur; glazen deuren (…_deur) zijn open
+      const trap = /^Blok_trap(_\d+|_bordes|trede)/.test(naam);
+      if (naam.startsWith('Vloer_') || trap) {
+        floorMeshes.push(obj);
+      }
+      if (trap || /^Blok_trapboom/.test(naam) || /_deur(_|$)/.test(naam)) return;
+      if (naam.includes('Wand_') || naam.includes('Kolom_') || naam.includes('Glas_') || naam.includes('Blok_')) {
+        const groep = groepVan(obj);
+        if (groep === 'huidig') collidablesHuidig.push(obj);
+        else if (groep === 'nieuw') collidablesNieuw.push(obj);
+        else collidablesVast.push(obj);
+      }
+    });
+    // buiten: het maaiveld en de vlakken van de omgeving (Omgeving_<naam>_<i>) en de stoep bij de voordeur,
+    // zodat je buiten op straathoogte loopt in plaats van op de hoogte van de laatste binnenvloer
+    sceneBuiten.traverse((obj) => {
+      if (!obj.isMesh) return;
+      const n = obj.name || '';
+      if (/^(Vloer_|Omgeving_.+_\d+$|Omgeving_stoep_entree)/.test(n)) floorMeshes.push(obj);
+      else if (/^Omgeving_.+_(gevel|gevel_hoog|stam)$/.test(n) || (/^Omgeving_(haag|beplanting|border)/.test(n) && !/_loof$/.test(n))) {
+        collidablesVast.push(obj);
+      }
+    });
+    rebuildActiveCollidables();
+
+    // Standpunten
+    if (nodeStandpunten) {
+      const wp = new THREE.Vector3();
+      nodeStandpunten.children.forEach((child) => {
+        if (!child.name.startsWith('Standpunt_')) return;
+        child.getWorldPosition(wp);
+        const label = (child.userData && child.userData.label) || child.name.replace('Standpunt_', '').replace(/_/g, ' ');
+        const kijkNaarRaw = child.userData && child.userData.kijk_naar;
+        const kijkNaar = kijkNaarRaw ? blenderToThree(kijkNaarRaw) : new THREE.Vector3(wp.x, wp.y, wp.z - 1);
+        standpunten.push({ name: child.name, label, position: wp.clone(), kijkNaar });
+      });
+    }
+    const select = document.getElementById('standpunt-select');
+    standpunten.forEach((sp, i) => {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = sp.label;
+      select.appendChild(opt);
+    });
+
+    // Maatlijnen
+    if (nodeMaten) {
+      const paren = new Map();
+      nodeMaten.children.forEach((child) => {
+        const m = child.name.match(/^Maat_(.+)_(A|B)$/);
+        if (!m) return;
+        const key = m[1];
+        if (!paren.has(key)) paren.set(key, {});
+        paren.get(key)[m[2]] = child;
+      });
+      const labelsLayer = document.getElementById('labels-layer');
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xd9550f });
+      const markMat = new THREE.MeshBasicMaterial({ color: 0xd9550f });
+      paren.forEach((pair) => {
+        if (!pair.A || !pair.B) return;
+        const pA = new THREE.Vector3();
+        const pB = new THREE.Vector3();
+        pair.A.getWorldPosition(pA);
+        pair.B.getWorldPosition(pB);
+
+        const geom = new THREE.BufferGeometry().setFromPoints([pA, pB]);
+        const line = new THREE.Line(geom, lineMat);
+        measureGroup.add(line);
+
+        const markGeom = new THREE.SphereGeometry(0.025, 10, 8);
+        const markA = new THREE.Mesh(markGeom, markMat);
+        markA.position.copy(pA);
+        const markB = new THREE.Mesh(markGeom, markMat);
+        markB.position.copy(pB);
+        measureGroup.add(markA, markB);
+
+        const label = (pair.A.userData && pair.A.userData.label) || 'maat';
+        const el = document.createElement('div');
+        el.className = 'maat-label';
+        el.textContent = label;
+        el.hidden = !state.maten;
+        labelsLayer.appendChild(el);
+        const mid = pA.clone().add(pB).multiplyScalar(0.5);
+        measureLabels.push({ el, mid });
+      });
+    }
+
+    applyStandVisibility();
+    if (nodeVerdieping) nodeVerdieping.visible = true;
+
+    // Startpositie: vanaf de bank (de standpunten staan op naam, dus "balkon" komt eerder), anders het eerste
+    if (standpunten.length) {
+      const start = Math.max(0, standpunten.findIndex((sp) => /bank/i.test(sp.label || '')));
+      gaNaarStandpunt(start);
+      select.value = String(start);
+    }
+
+    computeOverviewFraming();
+
+    root.traverse((obj) => {
+      if (!obj.isMesh) return;
+      const n = obj.name || (obj.parent && obj.parent.name) || '';
+      if (/^Vloer_maaiveld/.test(n) || (/^Glas_/.test(n) && !/garagedeur/.test(n))) buitenObjecten.push(obj);
+      // verbergers (de open raamvleugel uit de video) zijn er alleen voor de fototextuur; het raam is dicht
+      if (/^Verberger/.test(n)) obj.visible = false;
+      if (obj.userData.alleen_model || (obj.parent && obj.parent.userData && obj.parent.userData.alleen_model)) alleenModel.push(obj);
+    });
+    // meshes met een lichtkaart-UV (extras "lichtkaart" op de knoop of zijn ouder)
+    const lichtMeshes = [];
+    root.traverse((obj) => {
+      if (!obj.isMesh || !obj.geometry.attributes.uv1) return;
+      if ((obj.userData && obj.userData.lichtkaart) || (obj.parent && obj.parent.userData && obj.parent.userData.lichtkaart)) {
+        lichtMeshes.push(obj);
+      }
+    });
+    zetAnisotropie(root);
+    vraagRender();
+    laden.modelKlaar = true;
+    if (dGlb) dGlb.klaar = true;
+    toonVoortgang();
+    // elke stap vangt zijn eigen fouten af (dan blijft het model staan), dus de keten loopt altijd door
+    laadLichtkaarten(lichtMeshes)
+      .then(() => laadFoto(lichtMeshes))
+      .then(() => laadBuiten())
+      .then(bereidVoor)
+      .catch((e) => console.warn('Voorbereiden niet gelukt, het model staat er wel:', e))
+      .then(verbergLaadscherm);
+    // vangnet: blijft een download hangen, dan na een minuut toch het huis laten zien
+    window.setTimeout(verbergLaadscherm, 60000);
+}
+
+// Anisotrope filtering op alle texturen uit het model (vloeren, wanden, meubels): mipmaps staan al aan
+// (GLTFLoader zet LinearMipmapLinear), maar zonder anisotropie wordt een vloer op afstand een waas.
+// kleurcorrectie per materiaal (lineair), alleen als overbrugging tot de volgende bouw; nu leeg: het graniet
+// heeft sinds de bouw van 27-09 avond zelf de donkere kleur uit de video (materialen.json)
+const KLEURCORRECTIE = {};
+function zetAnisotropie(obj) {
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    const mc = o.material && KLEURCORRECTIE[o.material.name];
+    if (mc && !o.material.userData.gecorrigeerd) {
+      o.material.color.multiplyScalar(mc);
+      o.material.userData.gecorrigeerd = true;
+    }
+    for (const k of TEXTUUR_SLEUTELS) {
+      const t = o.material[k];
+      if (k !== 'lightMap' && t && t.isTexture && t.anisotropy !== MAX_ANISO) {
+        t.anisotropy = MAX_ANISO;
+        t.needsUpdate = true;
+      }
+    }
+  });
+}
+
+let dGlb = null;   // alleen bij de lokale terugval op huis.glb
+function onModelVoortgang(progress) {
+  if (!progress) return;
+  if (!dGlb) dGlb = nieuweDownload(progress.total || 1.5e6);
+  dGlb.geladen = progress.loaded;
+  if (progress.total) dGlb.totaal = progress.total;
+  toonVoortgang();
+}
+
+function onModelFout(err) {
+  console.error('Fout bij laden van het model', err);
+  laden.weg = true;
+  loadingEl.hidden = true;
+  errorEl.hidden = false;
+  errorDetail.textContent = (err && err.message) ? err.message : 'Onbekende fout, zie console.';
+}
+
+laadModel();
+
+// voor vergelijken met de Cycles-renders (posities in cm, assen als huis.json)
+window.kijkVanaf = (pos, naar) => {
+  setMode('walk');
+  camera.position.set(pos[0] / 100, pos[3] !== undefined ? pos[3] / 100 : camera.position.y, -pos[1] / 100);
+  if (pos[2] !== undefined) state.eyeHeight = pos[2] / 100;
+  state.floorReady = false;   // vloer opnieuw zoeken vanaf de nieuwe plek (pos[3] = ooghoogte in modelcm, optioneel)
+  camera.lookAt(naar[0] / 100, (naar[2] ?? 100) / 100, -naar[1] / 100);
+  kijkVanCamera();
+};
+// vergelijken met een videobeeld: camera exact op de stand uit uit/sfm/standpunten.json (pos in cm, R van
+// camera naar wereld, cameraframe zoals COLMAP: kijkt langs +z, y omlaag; f en wh in pixels). Zet de viewer stil
+// (geen lopen, geen vloer); setMode('walk') of een klik op Rondlopen maakt hem weer los.
+window.kijkZoals = ({ pos, R: r, f, wh }, buiten = false) => {
+  state.mode = 'vast';
+  orbitControls.enabled = false;
+  oog.buiten = buiten;
+  const naar3 = (v) => new THREE.Vector3(v[0], v[2], -v[1]);
+  const kol = (i) => [r[0][i], r[1][i], r[2][i]];   // R is camera -> wereld (sfm_render.py): kolommen = assen
+  const x = naar3(kol(0)), y = naar3(kol(1)).negate(), z = naar3(kol(2)).negate();
+  camera.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  camera.position.set(pos[0] / 100, pos[2] / 100, -pos[1] / 100);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.fov = 2 * Math.atan(wh[1] / 2 / f[1]) * 180 / Math.PI;
+  camera.updateProjectionMatrix();
+  vraagRender();
+};
+// proefhaak voor de Model-weergave: lichtkaartfactor, extra licht, omgeving, belichting, tonemapping
+window.lichtProef = ({ lk, hemi: h, env, exp, expBuiten, zon, envBuiten, grond, tm } = {}) => {
+  if (expBuiten !== undefined) BELICHTING.buiten = expBuiten;
+  if (zon !== undefined) zonBuiten.intensity = zon;
+  if (envBuiten !== undefined) sceneBuiten.environmentIntensity = envBuiten;
+  if (grond !== undefined) hemiBuiten.intensity = grond;
+  if (lk !== undefined) for (const m of lichtkaart.materialen.values()) m.lightMapIntensity = lichtkaart.schaal * lk;
+  if (h !== undefined) hemi.intensity = h;
+  if (env !== undefined) scene.environmentIntensity = env;
+  if (exp !== undefined) BELICHTING[(state.mode === 'bird' || oog.buiten) ? 'buiten' : 'binnen'] = exp;
+  if (tm) { renderer.toneMapping = { aces: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping, neutraal: THREE.NeutralToneMapping }[tm]; for (const m of lichtkaart.materialen.values()) m.needsUpdate = true; }
+  vraagRender();
+};
+// draw calls, driehoeken en texturen van het laatste beeld (om de vloeiendheid te meten), plus de
+// pixelratio en de gemiddelde rekentijd per getekend beeld op de CPU (GPU-tijd zit daar niet in)
+const meting = { som: 0, n: 0, cpuMs: 0 };
+// waar sta je (modelcm): voor het testen van lopen, trappen en binnen/buiten
+window.loopInfo = () => ({ pos: [camera.position.x * 100, -camera.position.z * 100, camera.position.y * 100].map(Math.round),
+  vloer: Math.round(state.floorY * 100), buiten: oog.buiten, modus: state.mode });
+window.renderInfo = () => ({
+  ...renderer.info.render,
+  ...renderer.info.memory,
+  pixelRatio: renderer.getPixelRatio(),
+  cpuMsPerBeeld: Number(meting.cpuMs.toFixed(2)),
+});
+
+function gaNaarStandpunt(index) {
+  const sp = standpunten[index];
+  if (!sp) return;
+  setMode('walk');
+  camera.position.copy(sp.position);
+  camera.lookAt(sp.kijkNaar);
+  kijkVanCamera();
+  snelheid.set(0, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Ooghoogte: raycast omlaag op Vloer_*
+// ---------------------------------------------------------------------------
+
+const downRay = new THREE.Raycaster();
+downRay.far = 20;
+const downOrigin = new THREE.Vector3();
+const downDir = new THREE.Vector3(0, -1, 0);
+const _vloerTreffers = [];
+const vloerVoor = { x: NaN, z: NaN };   // alleen opnieuw raycasten als je echt verplaatst bent
+
+// je voeten zoeken de vloer vanaf een traptrede hoger (STAP) naar beneden: zo stap je een trede op, loop je een
+// trap af, en pakt hij nooit de verdieping boven je hoofd. Geen vloer binnen VAL (een trapgat): blijf staan.
+const STAP = 0.55, VAL = 3.2;   // 55 cm: de stap van de oprit (-48) naar een dorpel (0) moet lukken
+function updateFloorSnap(dt) {
+  if (!floorMeshes.length) return;
+  if (camera.position.x !== vloerVoor.x || camera.position.z !== vloerVoor.z || !state.floorReady) {
+    vloerVoor.x = camera.position.x;
+    vloerVoor.z = camera.position.z;
+    const voeten = state.floorReady ? state.floorY : camera.position.y - state.eyeHeight;
+    downOrigin.set(camera.position.x, voeten + STAP, camera.position.z);
+    downRay.far = STAP + VAL;
+    downRay.set(downOrigin, downDir);
+    _vloerTreffers.length = 0;
+    downRay.intersectObjects(floorMeshes, false, _vloerTreffers);
+    if (_vloerTreffers.length) {
+      const vloer = _vloerTreffers[0].object;
+      state.floorY = _vloerTreffers[0].point.y;
+      state.floorReady = true;
+      let n = vloer;
+      while (n && n !== sceneBuiten) n = n.parent;
+      oog.buiten = n === sceneBuiten || /^Vloer_(terras|balkon|buitentrap)/.test(vloer.name);
+    }
+  }
+  if (!state.floorReady) return;
+  const target = state.floorY + state.eyeHeight;
+  const verschil = target - camera.position.y;
+  if (verschil === 0) return;
+  // laatste tiende millimeter meteen: anders blijft de camera eindeloos een fractie bewegen en tekenen
+  if (Math.abs(verschil) < 1e-4) camera.position.y = target;
+  else camera.position.y += verschil * (1 - Math.exp(-10 * dt));
+}
+
+// ---------------------------------------------------------------------------
+// Botsing: eenvoudige raycasts in de looprichting (vaste hulpvectoren, geen afval per beeld)
+// ---------------------------------------------------------------------------
+
+const bumpRay = new THREE.Raycaster();
+const BUMP_DIST = 0.3;
+const _botsRichting = new THREE.Vector3();
+const _botsTreffers = [];
+const _begrensd = { x: 0, z: 0 };
+
+const _knie = new THREE.Vector3();
+function botst(rx, rz) {
+  _botsRichting.set(rx, 0, rz);
+  bumpRay.far = BUMP_DIST;
+  for (const hoogte of [0, STAP + 0.1 - state.eyeHeight]) {       // ooghoogte en net boven een trede
+    _knie.copy(camera.position);
+    _knie.y += hoogte;
+    bumpRay.set(_knie, _botsRichting);
+    _botsTreffers.length = 0;
+    bumpRay.intersectObjects(activeCollidables, false, _botsTreffers);
+    if (_botsTreffers.length > 0) return true;
+  }
+  return false;
+}
+
+function begrensBeweging(deltaX, deltaZ) {
+  _begrensd.x = deltaX !== 0 && activeCollidables.length && botst(Math.sign(deltaX), 0) ? 0 : deltaX;
+  _begrensd.z = deltaZ !== 0 && activeCollidables.length && botst(0, Math.sign(deltaZ)) ? 0 : deltaZ;
+  return _begrensd;
+}
+
+// ---------------------------------------------------------------------------
+// Rondlopen: slepen om rond te kijken (muis en vinger), lopen met toetsen of joystick.
+// Geen pointer lock en geen klik-laag over het beeld: toetsen werken meteen.
+// ---------------------------------------------------------------------------
+
+const hintEl = document.getElementById('hint');
+let hintTimer = null;
+function toonHint(ms) {
+  hintEl.classList.remove('weg');
+  window.clearTimeout(hintTimer);
+  hintTimer = window.setTimeout(() => hintEl.classList.add('weg'), ms);
+}
+function verbergHint() {
+  window.clearTimeout(hintTimer);
+  hintEl.classList.add('weg');
+}
+
+const keys = { forward: false, back: false, left: false, right: false, sprint: false };
+window.addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
+  switch (e.code) {
+    case 'KeyW': case 'ArrowUp': keys.forward = true; break;
+    case 'KeyS': case 'ArrowDown': keys.back = true; break;
+    case 'KeyA': case 'ArrowLeft': keys.left = true; break;
+    case 'KeyD': case 'ArrowRight': keys.right = true; break;
+    case 'ShiftLeft': case 'ShiftRight': keys.sprint = true; break;
+  }
+});
+window.addEventListener('keyup', (e) => {
+  switch (e.code) {
+    case 'KeyW': case 'ArrowUp': keys.forward = false; break;
+    case 'KeyS': case 'ArrowDown': keys.back = false; break;
+    case 'KeyA': case 'ArrowLeft': keys.left = false; break;
+    case 'KeyD': case 'ArrowRight': keys.right = false; break;
+    case 'ShiftLeft': case 'ShiftRight': keys.sprint = false; break;
+  }
+});
+
+// Joystick (telefoon). Rondkijken gaat met een tweede vinger tegelijk: elke vinger heeft zijn eigen
+// pointerId, de joystick houdt de zijne vast met pointer capture.
+const joystickEl = document.getElementById('joystick');
+const joystickBasis = document.getElementById('joystick-basis');
+const joystickKnob = document.getElementById('joystick-knob');
+const joystickState = { active: false, pointerId: null, x: 0, y: 0, ren: false, cx: 0, cy: 0 };
+const JOY_RADIUS = 44;       // px: zo ver gaat de knop van het midden, dan volle loopsnelheid
+const JOY_DODE_ZONE = 0.14;  // trillen of rusten van de duim geeft geen beweging
+const JOY_REN = 1.5;         // duim verder dan 1,5 x de straal: rennen (zoals shift op het toetsenbord)
+const JOY_ZWEEF = 28;        // px: zo ver mag de ring naar de duim springen, binnen beeld
+
+let joystickAan = false;
+function werkJoystickBij() {
+  const zichtbaar = joystickAan && state.mode === 'walk';
+  if (!zichtbaar && joystickState.active) eindeJoystick({ pointerId: joystickState.pointerId });
+  joystickEl.hidden = !zichtbaar;
+}
+function zetJoystickAan() {
+  if (joystickAan) return;
+  joystickAan = true;
+  document.getElementById('hint-tekst').textContent = 'Sleep om rond te kijken · joystick linksonder om te lopen';
+  werkJoystickBij();
+}
+if (isTouchDevice) zetJoystickAan();
+// laptop of tablet met aanraakscherm maar een muis als hoofdaanwijzer: joystick bij de eerste aanraking
+window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') zetJoystickAan(); }, true);
+
+joystickEl.addEventListener('pointerdown', (e) => {
+  if (joystickState.active) return;   // tweede vinger op de joystick negeren
+  e.preventDefault();
+  const rect = joystickEl.getBoundingClientRect();
+  const rustX = rect.left + rect.width / 2;
+  const rustY = rect.top + rect.height / 2;
+  // het midden springt naar de duim (begrensd), zodat neerzetten nog geen beweging geeft
+  let ox = e.clientX - rustX;
+  let oy = e.clientY - rustY;
+  const o = Math.hypot(ox, oy);
+  if (o > JOY_ZWEEF) { ox *= JOY_ZWEEF / o; oy *= JOY_ZWEEF / o; }
+  joystickState.cx = rustX + ox;
+  joystickState.cy = rustY + oy;
+  joystickState.active = true;
+  joystickState.pointerId = e.pointerId;
+  joystickEl.classList.add('actief');
+  joystickBasis.style.transform = `translate(${ox}px, ${oy}px)`;
+  try { joystickEl.setPointerCapture(e.pointerId); } catch (err) { /* niet kritiek */ }
+  updateJoystick(e);
+  verbergHint();
+});
+joystickEl.addEventListener('pointermove', (e) => {
+  if (joystickState.active && e.pointerId === joystickState.pointerId) updateJoystick(e);
+});
+function eindeJoystick(e) {
+  if (!joystickState.active || e.pointerId !== joystickState.pointerId) return;
+  joystickState.active = false;
+  joystickState.pointerId = null;
+  joystickState.x = 0;
+  joystickState.y = 0;
+  joystickState.ren = false;
+  joystickEl.classList.remove('actief', 'ren');
+  joystickBasis.style.transform = '';
+  joystickKnob.style.transform = '';
+}
+joystickEl.addEventListener('pointerup', eindeJoystick);
+joystickEl.addEventListener('pointercancel', eindeJoystick);
+joystickEl.addEventListener('lostpointercapture', eindeJoystick);
+
+function updateJoystick(e) {
+  const dx = e.clientX - joystickState.cx;
+  const dy = e.clientY - joystickState.cy;
+  const len = Math.hypot(dx, dy);
+  const k = len > JOY_RADIUS ? JOY_RADIUS / len : 1;
+  joystickKnob.style.transform = `translate(${(dx * k).toFixed(1)}px, ${(dy * k).toFixed(1)}px)`;
+  // uitslag 0..1 na de dode zone, licht gebogen: kleine duwtjes geven fijn schuifelen
+  const uit = Math.min(1, len / JOY_RADIUS);
+  const m = uit <= JOY_DODE_ZONE ? 0 : Math.pow((uit - JOY_DODE_ZONE) / (1 - JOY_DODE_ZONE), 1.3);
+  joystickState.x = len > 0 ? (dx / len) * m : 0;
+  joystickState.y = len > 0 ? (dy / len) * m : 0;
+  const ren = len > JOY_RADIUS * JOY_REN;
+  if (ren !== joystickState.ren) {
+    joystickState.ren = ren;
+    joystickEl.classList.toggle('ren', ren);
+  }
+}
+
+// Slepen om rond te kijken (muis en vinger), buiten paneel en joystick.
+const lookState = { active: false, pointerId: null, lastX: 0, lastY: 0 };
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const LOOK_SPEED = { touch: 0.0045, mouse: 0.0032, pen: 0.0032 };
+
+function isBinnenBediening(target) {
+  return !!(target.closest && (target.closest('#panel') || target.closest('#joystick')));
+}
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (state.mode !== 'walk') return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (isBinnenBediening(e.target)) return;
+  if (lookState.active) return;   // al een vinger aan het kijken: tweede vinger negeren
+  lookState.active = true;
+  lookState.pointerId = e.pointerId;
+  lookState.speed = LOOK_SPEED[e.pointerType] || LOOK_SPEED.mouse;
+  lookState.lastX = e.clientX;
+  lookState.lastY = e.clientY;
+  try { renderer.domElement.setPointerCapture(e.pointerId); } catch (err) { /* niet kritiek */ }
+  renderer.domElement.classList.add('slepen');
+  verbergHint();
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!lookState.active || e.pointerId !== lookState.pointerId) return;
+  const dx = e.clientX - lookState.lastX;
+  const dy = e.clientY - lookState.lastY;
+  lookState.lastX = e.clientX;
+  lookState.lastY = e.clientY;
+  kijk.doelYaw -= dx * lookState.speed;
+  kijk.doelPitch = Math.max(-1.35, Math.min(1.35, kijk.doelPitch - dy * lookState.speed));
+});
+const eindeLook = (e) => {
+  if (e.pointerId !== lookState.pointerId) return;
+  lookState.active = false;
+  lookState.pointerId = null;
+  renderer.domElement.classList.remove('slepen');
+};
+renderer.domElement.addEventListener('pointerup', eindeLook);
+renderer.domElement.addEventListener('pointercancel', eindeLook);
+renderer.domElement.addEventListener('lostpointercapture', eindeLook);
+
+// Geen scrollen, knijpzoomen, vergrootglas of menu van de browser tijdens het bedienen, ook binnen het
+// artifact-kader. touch-action: none regelt het meeste; iOS Safari zoomt daarnaast via gesture-events.
+document.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+for (const soort of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(soort, (e) => e.preventDefault(), { passive: false });
+}
+for (const el of [renderer.domElement, joystickEl]) {
+  el.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// Venster kwijt (andere app, alt-tab): niets blijft hangen, geen toets die blijft doorlopen
+window.addEventListener('blur', () => {
+  for (const k of Object.keys(keys)) keys[k] = false;
+  eindeJoystick({ pointerId: joystickState.pointerId });
+  eindeLook({ pointerId: lookState.pointerId });
+});
+
+const _forward = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+
+// Kijkrichting en snelheid met demping, zodat lopen en draaien vloeiend aanvoelen (geen schokken).
+const kijk = { yaw: 0, pitch: 0, doelYaw: 0, doelPitch: 0 };
+const snelheid = new THREE.Vector3();
+function kijkVanCamera() {
+  const e = new THREE.Euler(0, 0, 0, 'YXZ').setFromQuaternion(camera.quaternion);
+  kijk.yaw = kijk.doelYaw = e.y;
+  kijk.pitch = kijk.doelPitch = e.x;
+}
+function updateKijk(dt) {
+  if (state.mode !== 'walk') return;
+  const dYaw = kijk.doelYaw - kijk.yaw;
+  const dPitch = kijk.doelPitch - kijk.pitch;
+  if (dYaw === 0 && dPitch === 0) return;   // stil: camera niet aanraken, dan ook niet tekenen
+  if (Math.abs(dYaw) < 1e-5 && Math.abs(dPitch) < 1e-5) {
+    kijk.yaw = kijk.doelYaw;                // het laatste stukje meteen, anders ijlt hij eindeloos na
+    kijk.pitch = kijk.doelPitch;
+  } else {
+    const k = 1 - Math.exp(-18 * dt);
+    kijk.yaw += dYaw * k;
+    kijk.pitch += dPitch * k;
+  }
+  _euler.set(kijk.pitch, kijk.yaw, 0, 'YXZ');
+  camera.quaternion.setFromEuler(_euler);
+}
+
+const _dir = new THREE.Vector3();
+function updateBeweging(dt) {
+  if (state.mode !== 'walk') return;
+
+  let fwdInput = 0;
+  let rightInput = 0;
+  let sprint = false;
+
+  if (joystickState.active) {
+    fwdInput = -joystickState.y;
+    rightInput = joystickState.x;
+    sprint = joystickState.ren;
+  } else {
+    if (keys.forward) fwdInput += 1;
+    if (keys.back) fwdInput -= 1;
+    if (keys.right) rightInput += 1;
+    if (keys.left) rightInput -= 1;
+    sprint = keys.sprint;
+  }
+
+  camera.getWorldDirection(_forward);
+  _forward.y = 0;
+  if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, -1); else _forward.normalize();
+  _right.crossVectors(_forward, _up).normalize();
+
+  const speed = (sprint ? 2.4 : 1.25);
+  const mag = Math.min(1, Math.hypot(fwdInput, rightInput));
+  const dir = _dir.set(0, 0, 0);
+  dir.addScaledVector(_forward, fwdInput);
+  dir.addScaledVector(_right, rightInput);
+  if (dir.lengthSq() > 1e-6) dir.normalize();
+  // versnellen en uitrollen (kritisch gedempt), max speed m/s
+  const doel = dir.multiplyScalar(speed * mag);
+  const k = 1 - Math.exp(-(mag > 0 ? 9 : 7) * dt);
+  snelheid.x += (doel.x - snelheid.x) * k;
+  snelheid.z += (doel.z - snelheid.z) * k;
+  if (snelheid.lengthSq() < 1e-6) return;
+  const begrensd = begrensBeweging(snelheid.x * dt, snelheid.z * dt);
+  if (begrensd.x === 0) snelheid.x = 0;
+  if (begrensd.z === 0) snelheid.z = 0;
+  camera.position.x += begrensd.x;
+  camera.position.z += begrensd.z;
+}
+
+// ---------------------------------------------------------------------------
+// Vogelvlucht: OrbitControls
+// ---------------------------------------------------------------------------
+
+const orbitControls = new OrbitControls(camera, renderer.domElement);
+orbitControls.enableDamping = true;
+orbitControls.dampingFactor = 0.08;
+orbitControls.enabled = false;
+orbitControls.minDistance = 2;
+orbitControls.maxDistance = 60;
+orbitControls.maxPolarAngle = Math.PI * 0.49;
+
+let overviewTarget = new THREE.Vector3(0, 0, 0);
+let overviewPos = new THREE.Vector3(8, 10, 8);
+let laatsteWalkPos = null;
+let laatsteWalkQuat = null;
+
+function computeOverviewFraming() {
+  if (!root) return;
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) return;
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  overviewTarget.copy(center);
+  overviewTarget.y = box.min.y;
+  const spread = Math.max(size.x, size.z, 4);
+  overviewPos.set(center.x, box.max.y + spread * 0.9, center.z + spread * 0.75);
+}
+
+function setMode(mode) {
+  if (mode === state.mode) return;
+  if (mode === 'bird') {
+    laatsteWalkPos = camera.position.clone();
+    laatsteWalkQuat = camera.quaternion.clone();
+    state.mode = 'bird';
+    orbitControls.enabled = true;
+    orbitControls.target.copy(overviewTarget);
+    camera.position.copy(overviewPos);
+    camera.lookAt(overviewTarget);
+    orbitControls.update();
+  } else {
+    state.mode = 'walk';
+    orbitControls.enabled = false;
+    if (laatsteWalkPos) {
+      camera.position.copy(laatsteWalkPos);
+      camera.quaternion.copy(laatsteWalkQuat);
+    }
+    kijkVanCamera();
+  }
+  if (nodeVerdieping) nodeVerdieping.visible = true;
+  zetLook(foto.look);   // achtergrondbol en maaiveld horen bij de modus (in vogelvlucht geen bol)
+  document.querySelectorAll('.seg-btn[data-mode]').forEach((btn) => {
+    btn.setAttribute('aria-pressed', String(btn.dataset.mode === (state.mode === 'bird' ? 'bird' : 'walk')));
+  });
+  werkJoystickBij();   // in vogelvlucht geen joystick: daar draai je met één vinger en zoom je met twee
+  vraagRender();
+}
+
+// ---------------------------------------------------------------------------
+// Bediening: knoppen
+// ---------------------------------------------------------------------------
+
+document.querySelectorAll('.seg-btn[data-stand]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.stand = btn.dataset.stand;
+    document.querySelectorAll('.seg-btn[data-stand]').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.stand === state.stand));
+    });
+    applyStandVisibility();
+  });
+});
+
+document.querySelectorAll('.seg-btn[data-look]').forEach((btn) => {
+  btn.addEventListener('click', () => { zetLook(btn.dataset.look); btn.blur(); });
+});
+
+document.getElementById('btn-maten').addEventListener('click', (e) => {
+  state.maten = !state.maten;
+  e.currentTarget.setAttribute('aria-pressed', String(state.maten));
+  e.currentTarget.blur();       // anders pakt de knop de pijltjestoetsen
+  applyStandVisibility();
+});
+
+document.getElementById('btn-constructie').addEventListener('click', (e) => {
+  state.accentueren = !state.accentueren;
+  e.currentTarget.setAttribute('aria-pressed', String(state.accentueren));
+  applyAccentMateriaal();
+});
+
+document.querySelectorAll('.seg-btn[data-mode]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    setMode(btn.dataset.mode === 'bird' ? 'bird' : 'walk');
+    btn.blur(); // anders pakt de knop de pijltjestoetsen
+  });
+});
+
+document.getElementById('standpunt-select').addEventListener('change', (e) => {
+  const idx = parseInt(e.target.value, 10);
+  if (!Number.isNaN(idx)) gaNaarStandpunt(idx);
+  e.target.blur(); // pijltjes weer voor lopen, niet voor de keuzelijst
+});
+
+// de hint verschijnt pas als het laadscherm weg is (verbergLaadscherm), anders loopt hij eronder af
+
+// ---------------------------------------------------------------------------
+// Labels: projecteren op scherm
+// ---------------------------------------------------------------------------
+
+const _proj = new THREE.Vector3();
+function updateLabels() {
+  if (!measureLabels.length || !measureGroup.visible) return;   // alleen met de knop Maten aan
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  for (const { el, mid } of measureLabels) {
+    if (el.hidden) { el.style.display = 'none'; continue; }
+    _proj.copy(mid).project(camera);
+    if (_proj.z > 1) { el.style.display = 'none'; continue; }
+    el.style.display = 'block';
+    const x = (_proj.x * 0.5 + 0.5) * w;
+    const y = (-_proj.y * 0.5 + 0.5) * h;
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Animatielus
+// ---------------------------------------------------------------------------
+
+// Timer in plaats van Clock (verouderd); connect() zet de tijd stil zolang het tabblad verborgen is,
+// zodat je na terugkomen niet door een muur schiet.
+const timer = new THREE.Timer();
+timer.connect(document);
+const _vorigeCamera = new THREE.Matrix4();
+
+function cameraVeranderd() {
+  // kleiner dan een honderdste millimeter of 0,01 milliradiaal zie je niet (ver onder een pixel): dan
+  // niet opnieuw tekenen. Vergeleken met het laatst getekende beeld, dus kleine stapjes tellen op.
+  const a = camera.matrixWorld.elements;
+  const b = _vorigeCamera.elements;
+  for (let i = 0; i < 16; i++) if (Math.abs(a[i] - b[i]) > 1e-5) return true;
+  return false;
+}
+
+renderer.setAnimationLoop((tijd) => {
+  timer.update(tijd);
+  const dt = Math.min(0.05, timer.getDelta() || 0);
+
+  if (state.mode === 'walk') {
+    updateKijk(dt);
+    updateBeweging(dt);
+    updateFloorSnap(dt);
+  } else if (state.mode === 'bird') {
+    orbitControls.update();
+  }
+
+  updateBelichting(dt);
+  camera.updateMatrixWorld();
+  if (cameraVeranderd()) {
+    _vorigeCamera.copy(camera.matrixWorld);
+    tekenNodig = Math.max(tekenNodig, 1);
+  }
+  if (tekenNodig <= 0) return;
+  tekenNodig--;
+
+  const t0 = performance.now();
+  updateLabels();
+  buitenBol.position.copy(camera.position);
+  renderer.info.reset();
+  if (sceneBuiten.visible) {
+    renderer.render(sceneBuiten, camera);
+    renderer.autoClear = false;
+    renderer.render(scene, camera);
+    renderer.autoClear = true;
+  } else {
+    renderer.render(scene, camera);
+  }
+  meting.som += performance.now() - t0;
+  if (++meting.n === 60) { meting.cpuMs = meting.som / 60; meting.som = 0; meting.n = 0; }
+});
+</script>
